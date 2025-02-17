@@ -523,6 +523,14 @@
 
 <div id="Sandbox" class="tabcontent">
     <h1>Parts List</h1>
+    <!-- Panel Selection Dropdown -->
+    <label for="panel-select">Select Panel:</label>
+    <select id="panel-select" onchange="updatePanel()">
+        <option value="DIN-EN-2x18">DIN-EN-2x18 (2 rails)</option>
+        <option value="DIN-EN-3x18">DIN-EN-3x18 (3 rails)</option>
+        <option value="DIN-EN-6x18">DIN-EN-6x18 (6 rails)</option>
+        <option value="DIN-EN-10x18">DIN-EN-10x18 (10 rails)</option>
+    </select>
     <div class="container">
         <div class="parts-list">
             <button class="button" onclick="addPart('NET', 400, 140)">Add NET</button>
@@ -530,7 +538,7 @@
             <button class="button" onclick="addPart('LINK', 300, 140)">Add LINK</button>
             <button class="button" onclick="nextRail()">Next Rail</button>
             <button class="button" onclick="removeLastPart()">Remove Last Part</button>
-            <button class="button readd-rail-button" onclick="readdRail()">Re-add Rail</button>
+            <button class="button" onclick="addRail()">Add Rail</button>
             <button class="button" onclick="saveConfiguration()">Save Configuration</button>
             <button class="button" onclick="loadConfiguration()">Load Configuration</button>
             <button class="button" onclick="exportAsImage()">Export as Image</button>
@@ -636,6 +644,7 @@
     const customPartModal = document.getElementById("customPartModal");
     const partTemplatesList = document.getElementById("part-templates-list");
     const polylineSvg = document.getElementById("polyline-svg");
+    const panelSelect = document.getElementById("panel-select");
 
     let currentRailIndex = 0;
     let railPositions = [];
@@ -651,12 +660,15 @@
     let isDarkMode = false; // Dark mode state
     let isDrawingPolyline = false; // Polyline drawing state
     let selectedPart = null; // Track the first selected part for polyline drawing
+    let maxRails = 10; // Default maximum rails
 
-    // Zoom variables
-    let scale = 0.5; // Initial scale
-    const minScale = 0.2; // Minimum zoom level
-    const maxScale = 2; // Maximum zoom level
-    const zoomFactor = 0.1; // Zoom increment/decrement
+    // Panel limits
+    const panelLimits = {
+        "DIN-EN-2x18": 2,
+        "DIN-EN-3x18": 3,
+        "DIN-EN-6x18": 6,
+        "DIN-EN-10x18": 10
+    };
 
     // Show popup on page load
     window.onload = () => {
@@ -748,7 +760,12 @@
 
     // Create Rails
     function createRails() {
-        for (let i = 0; i < 10; i++) {
+        railContainer.innerHTML = ""; // Clear existing rails
+        railPositions = [];
+        railWidths = [];
+        partPositions = [];
+
+        for (let i = 0; i < maxRails; i++) {
             let rail = document.createElement("div");
             rail.className = "rail";
             rail.style.top = `${100 + i * 200}px`;
@@ -767,10 +784,57 @@
         }
     }
 
+    // Update Panel
+    function updatePanel() {
+        const selectedPanel = panelSelect.value;
+        maxRails = panelLimits[selectedPanel];
+
+        // Recreate rails based on the new limit
+        createRails();
+    }
+
+    // Add Rail
+    function addRail() {
+        const selectedPanel = panelSelect.value;
+        const maxRailsForPanel = panelLimits[selectedPanel];
+
+        if (railPositions.length >= maxRailsForPanel) {
+            alert(`Cannot add more rails. The selected panel (${selectedPanel}) only supports ${maxRailsForPanel} rails.`);
+            return;
+        }
+
+        // Create a new rail
+        const newRailIndex = railPositions.length;
+        const newRailTop = 100 + newRailIndex * 200;
+
+        let rail = document.createElement("div");
+        rail.className = "rail";
+        rail.style.top = `${newRailTop}px`;
+        rail.id = `rail-${newRailIndex}`;
+
+        let deleteButton = document.createElement("button");
+        deleteButton.className = "delete-rail-button";
+        deleteButton.textContent = "Delete Rail";
+        deleteButton.onclick = () => deleteRail(newRailIndex);
+        rail.appendChild(deleteButton);
+
+        railContainer.appendChild(rail);
+
+        // Update the state
+        railPositions.push(newRailTop);
+        railWidths.push(0);
+        partPositions.push([]);
+
+        // Add to action stack for undo/redo
+        actionStack.push({ type: "addRail", railIndex: newRailIndex });
+        redoStack = []; // Clear redo stack
+        updatePartHistory(`Added rail ${newRailIndex}`);
+    }
+
     // Add Part
     function addPart(type, width, height) {
-        if (currentRailIndex >= 10) {
-            alert("No more rails available.");
+        if (currentRailIndex >= maxRails) {
+            alert(`Cannot add more rails. The selected panel (${panelSelect.value}) only supports ${maxRails} rails.`);
             return;
         }
 
@@ -884,7 +948,7 @@
 
             // Snap to the nearest rail
             const railIndex = Math.floor((y - 100) / 200); // Calculate which rail the part is on
-            if (railIndex >= 0 && railIndex < 10) {
+            if (railIndex >= 0 && railIndex < maxRails) {
                 const railTop = railPositions[railIndex];
                 const railBottom = railTop + 100; // Rail height is 100px
 
@@ -1030,62 +1094,78 @@
     }
 
     // Generate Pick List
-function generatePickList() {
-    pickListTableBody.innerHTML = ""; // Clear the table
+    function generatePickList() {
+        pickListTableBody.innerHTML = ""; // Clear the table
 
-    // Count the number of each part type
-    const partCounts = {};
-    parts.forEach(part => {
-        const partType = part.type;
-        const partOption = part.element.querySelector(".dropdown").value;
-        let partKey = `${partType}, ${partOption}`;
-
-        // Handle PSU parts (PSU1 - PSU9)
-        if (partType === "PSU" && partOption.startsWith("PSU")) {
-            partKey = "PSU"; // Map all PSU1-PSU9 to "PSU"
-        }
-
-        // Map the part key to the corresponding part name
-        const partNameMap = {
-            "NET, LV": "ZUMNET-DIN-16A-LV",
-            "NET, DLI": "ZUMNET-DIN-DLI",
-            "LINK, LV": "ZUMLINK-DIN-16A-LV",
-            "LINK, DIMU": "ZUMLINK-DIN-DIMU",
-            "LINK, SW": "ZUMLINK-DIN-20A-SW",
-            "LINK, PLUG": "ZUMLINK-DIN-20A-PLUG",
-            "LINK, IO": "ZUMLINK-DIN-IO",
-            "PSU": "ZUMLINK-DIN-PSU" // Map all PSU parts to ZUMLINK-DIN-PSU
-        };
-
-        const partName = partNameMap[partKey] || partType;
-
-        partCounts[partName] = (partCounts[partName] || 0) + 1;
-    });
-
-    // Add rows to the pick list table
-    for (const [partName, count] of Object.entries(partCounts)) {
+        // Add the selected panel to the pick list
+        const selectedPanel = panelSelect.value;
         let row = document.createElement("tr");
 
-        // Part Name
-        let partNameCell = document.createElement("td");
-        partNameCell.textContent = partName;
-        row.appendChild(partNameCell);
+        // Panel Name
+        let panelNameCell = document.createElement("td");
+        panelNameCell.textContent = selectedPanel;
+        row.appendChild(panelNameCell);
 
         // Quantity
         let quantityCell = document.createElement("td");
-        quantityCell.textContent = count;
+        quantityCell.textContent = 1; // Only one panel
         row.appendChild(quantityCell);
 
         pickListTableBody.appendChild(row);
-    }
 
-    // Show the pick list table
-    document.getElementById("pick-list-table").style.display = "table";
-}
+        // Count the number of each part type
+        const partCounts = {};
+        parts.forEach(part => {
+            const partType = part.type;
+            const partOption = part.element.querySelector(".dropdown").value;
+            let partKey = `${partType}, ${partOption}`;
+
+            // Handle PSU parts (PSU1 - PSU9)
+            if (partType === "PSU" && partOption.startsWith("PSU")) {
+                partKey = "PSU"; // Map all PSU1-PSU9 to "PSU"
+            }
+
+            // Map the part key to the corresponding part name
+            const partNameMap = {
+                "NET, LV": "ZUMNET-DIN-16A-LV",
+                "NET, DLI": "ZUMNET-DIN-DLI",
+                "LINK, LV": "ZUMLINK-DIN-16A-LV",
+                "LINK, DIMU": "ZUMLINK-DIN-DIMU",
+                "LINK, SW": "ZUMLINK-DIN-20A-SW",
+                "LINK, PLUG": "ZUMLINK-DIN-20A-PLUG",
+                "LINK, IO": "ZUMLINK-DIN-IO",
+                "PSU": "ZUMLINK-DIN-PSU" // Map all PSU parts to ZUMLINK-DIN-PSU
+            };
+
+            const partName = partNameMap[partKey] || partType;
+
+            partCounts[partName] = (partCounts[partName] || 0) + 1;
+        });
+
+        // Add rows to the pick list table
+        for (const [partName, count] of Object.entries(partCounts)) {
+            let row = document.createElement("tr");
+
+            // Part Name
+            let partNameCell = document.createElement("td");
+            partNameCell.textContent = partName;
+            row.appendChild(partNameCell);
+
+            // Quantity
+            let quantityCell = document.createElement("td");
+            quantityCell.textContent = count;
+            row.appendChild(quantityCell);
+
+            pickListTableBody.appendChild(row);
+        }
+
+        // Show the pick list table
+        document.getElementById("pick-list-table").style.display = "table";
+    }
 
     // Next Rail
     function nextRail() {
-        if (currentRailIndex < 9) {
+        if (currentRailIndex < maxRails - 1) {
             currentRailIndex++;
         } else {
             alert("No more rails left!");
@@ -1116,53 +1196,39 @@ function generatePickList() {
 
     // Delete Rail
     function deleteRail(railIndex) {
+        if (railIndex < 0 || railIndex >= railPositions.length) {
+            alert("Invalid rail index!");
+            return;
+        }
+
+        // Remove all parts on the rail
         partPositions[railIndex].forEach(part => railContainer.removeChild(part));
         partPositions[railIndex] = [];
 
-        let rail = document.getElementById(`rail-${railIndex}`);
-        railContainer.removeChild(rail);
+        // Remove the rail from the DOM
+        const rail = document.getElementById(`rail-${railIndex}`);
+        if (rail) {
+            railContainer.removeChild(rail);
+        }
 
-        railWidths[railIndex] = 0;
-        deletedRails.push(railIndex);
+        // Update the state
+        railPositions.splice(railIndex, 1);
+        railWidths.splice(railIndex, 1);
+        partPositions.splice(railIndex, 1);
 
-        // Remove parts from the parts array
-        parts = parts.filter(p => !partPositions[railIndex].includes(p.element));
+        // Update the IDs of the remaining rails
+        for (let i = railIndex; i < railPositions.length; i++) {
+            const rail = document.getElementById(`rail-${i + 1}`);
+            if (rail) {
+                rail.id = `rail-${i}`;
+                rail.style.top = `${100 + i * 200}px`; // Adjust the position
+            }
+        }
 
         // Add to action stack for undo/redo
         actionStack.push({ type: "deleteRail", railIndex });
         redoStack = []; // Clear redo stack
         updatePartHistory(`Deleted rail ${railIndex}`);
-    }
-
-    // Re-add Rail
-    function readdRail() {
-        if (deletedRails.length === 0) {
-            alert("No rails to re-add!");
-            return;
-        }
-
-        let railIndex = deletedRails.pop();
-        let rail = document.createElement("div");
-        rail.className = "rail";
-        rail.style.top = `${100 + railIndex * 200}px`;
-        rail.id = `rail-${railIndex}`;
-
-        let deleteButton = document.createElement("button");
-        deleteButton.className = "delete-rail-button";
-        deleteButton.textContent = "Delete Rail";
-        deleteButton.onclick = () => deleteRail(railIndex);
-        rail.appendChild(deleteButton);
-
-        railContainer.appendChild(rail);
-
-        // Reinitialize railWidths and partPositions for the re-added rail
-        railWidths[railIndex] = 0;
-        partPositions[railIndex] = [];
-
-        // Add to action stack for undo/redo
-        actionStack.push({ type: "readdRail", railIndex });
-        redoStack = []; // Clear redo stack
-        updatePartHistory(`Re-added rail ${railIndex}`);
     }
 
     // Create Dropdown
@@ -1230,7 +1296,8 @@ function generatePickList() {
             partPositions,
             currentRailIndex,
             currentLNumber,
-            deviceMaValues
+            deviceMaValues,
+            selectedPanel: panelSelect.value
         };
         localStorage.setItem("sandboxConfiguration", JSON.stringify(configuration));
         alert("Configuration saved!");
@@ -1253,6 +1320,10 @@ function generatePickList() {
         currentRailIndex = configuration.currentRailIndex;
         currentLNumber = configuration.currentLNumber;
         deviceMaValues = configuration.deviceMaValues;
+
+        // Set the selected panel
+        panelSelect.value = configuration.selectedPanel || "DIN-EN-10x18";
+        updatePanel();
 
         // Recreate parts
         configuration.parts.forEach(partConfig => {
@@ -1371,7 +1442,7 @@ function generatePickList() {
             case "deleteRail":
                 readdRail();
                 break;
-            case "readdRail":
+            case "addRail":
                 deleteRail(lastAction.railIndex);
                 break;
         }
@@ -1401,8 +1472,8 @@ function generatePickList() {
             case "deleteRail":
                 deleteRail(lastAction.railIndex);
                 break;
-            case "readdRail":
-                readdRail();
+            case "addRail":
+                addRail();
                 break;
         }
 
